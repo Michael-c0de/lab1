@@ -82,11 +82,10 @@ class DynamicTable(QWidget):
         self.setLayout(layout)
         
         # 定时器，每0.5秒从队列获取数据
-        self.update_timer = QTimer(self)
-        self.update_timer.setInterval(1000)  # 每1秒更新一次表格
-        self.update_timer.timeout.connect(self.update_table)
-        self.update_timer.start()
-        self.cache = {}
+        # self.update_timer = QTimer(self)
+        # self.update_timer.setInterval(1000)  # 每1秒更新一次表格
+        # self.update_timer.timeout.connect(self.update_table)
+        # self.update_timer.start()
         self.filter_exp = None
         self.batch_size = 500
     def filter(self, packet:Packet):
@@ -116,7 +115,7 @@ class DynamicTable(QWidget):
         self.table_view.setUpdatesEnabled(True)
 
     def update_table(self):
-        """定期检查数据队列并更新表格"""
+        """更新表格"""
         new_offset = len(self.arrive_list)
         if new_offset > self.offset:
             batch=[]

@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 
 from PyQt5 import QtCore, QtWidgets
-from PyQt5.QtWidgets import QApplication, QLineEdit
+from PyQt5.QtWidgets import QApplication
 
 import sys
 from table import  DynamicTable, MyTableModel
 from device_mm import select_device
 import subprocess
 from logger import logging, logger
-from scapy.all import Packet, raw, Ether, PcapReader
+from scapy.all import Packet, raw, PcapReader
 from util import hexdump_bytes, packet2dict
 import tree
 import os
-import signal
 logger.setLevel(logging.DEBUG)
 
 class Ui_Form(object):
@@ -123,11 +122,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_raw_data(self, packet:bytes):
         self.ui.textBrowser_2.setText(hexdump_bytes(packet))
     
-    def __init__(self, reader:PcapReader, p:subprocess.Popen):
+    def __init__(self):
         super().__init__()
         self.item_list = []
-        self.reader = reader
-        self.subp = p
+        self.reader = None
+        self.subp = None
         # table, item_list为表格渲染数据来源
         self.set_dynamic_table(self.item_list)
         # Create the Form UI
@@ -139,25 +138,55 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setupMenu()
         # Maximize the form
         self.showMaximized()
-        self.last_item = 1
-        # 双进程数据同步计时器
-        # 定时器，每0.5秒从队列获取数据
+        
+        # 同步计时器
         self.update_timer = QtCore.QTimer(self)
         self.update_timer.setInterval(1000)  # 每1秒同步一次数据
         self.update_timer.timeout.connect(self.sync_data)
-        self.update_timer.start()
-
         # 过滤表达式
         self.ui.filter_exp.returnPressed.connect(self.enter_exp_event)
+    
+    def start_new_listen(self):
+        self.tabe_model.delete_all_data()
+        out_file = "tmp.pcap"
+        dev = select_device()
+        bpf = ""
+        if os.path.exists(out_file):
+            os.remove(out_file)
+        self.subp = subprocess.Popen(
+            args=["main.exe", dev, out_file, bpf],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            stdin=subprocess.PIPE, 
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            )
+        while not os.path.exists(out_file):
+            pass
+        self.reader = PcapReader(out_file)
+        self.last_item = 1
+        # 开启同步
+        self.update_timer.start()
 
+    def stop_listen(self):
+        # 结束同步
+        logger.info("try stop listen")
+        self.update_timer.stop()
+        self.subp.stdin.write("2\n")
+        self.subp.stdin.flush()
+        self.subp.wait()
+        self.subp=None
+        self.reader=None
+
+        
     def sync_data(self):
-        """定期同步两个进程的数据"""
+        """定期同步两个进程的数据,并更新表格"""
         # 询问大小
         #define SIGUSR 25
         
-        process.stdin.write("1\n")
-        process.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
-        output = process.stdout.readline().strip()
+        self.subp.stdin.write("1\n")
+        self.subp.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
+        output = self.subp.stdout.readline().strip()
         value = int(output)
         count = value - self.last_item
         assert(count>=0)
@@ -167,8 +196,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for index in range(self.last_item, value):
             self.item_list.append((index, next(self.reader)))
         self.last_item = value
+        self.dynamic_table.update_table()
         logger.debug(f"sync {count} packets end")
-
     def setupMenu(self):
         # Create a menu bar
         menubar = self.menuBar()
@@ -194,8 +223,8 @@ class MainWindow(QtWidgets.QMainWindow):
         row = Item.row()
         # col = Item.column()
         id = int(self.tabe_model.index(row, 0).data())
+        logger.info(f"click item {id}")
         packet = self.dynamic_table.arrive_list[id-1][1]
-        print(f"id is {id}")
         self.set_data(packet)
         raw_byets = raw(packet)
         self.set_raw_data(raw_byets)
@@ -203,36 +232,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def enter_exp_event(self):
         # 处理回车事件
         text = self.ui.filter_exp.text()
-        print(f"回车被按下，输入内容: {text}")
+        logger.info(f"enter bpf exp {text}")
+
         self.dynamic_table.filter_exp = text
         self.dynamic_table.offset = 0
         self.tabe_model.delete_all_data()
         self.dynamic_table.update_table()
-if __name__ == "__main__":
-    dev = select_device()  # 选择设备
-    bpf = ""
-    out_file = "tmp.pcap"
-    if os.path.exists(out_file):
-        os.remove(out_file)
-    process = subprocess.Popen(
-        args=["main.exe", dev, out_file, bpf],
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
-        stdin=subprocess.PIPE, 
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        )
-    while not os.path.exists(out_file):
-        pass
-    reader = PcapReader(out_file)
     
+
+
+    
+if __name__ == "__main__":
     # 启动Qt应用
     app = QApplication(sys.argv)
-    window = MainWindow(reader, process)
+    window = MainWindow()
     window.show()
-
+    window.start_new_listen()
     app.exec_()
-    process.stdin.write("2\n")
-    process.stdin.flush()
-    process.wait()
-    sys.exit()
+    window.stop_listen()
