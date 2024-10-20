@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 
 from PyQt5 import QtCore, QtWidgets
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox, QInputDialog
 
 import sys
 from table import  DynamicTable, MyTableModel
-from device_mm import select_device
+from device_mm import PcapDeviceManager
 import subprocess
 from logger import logging, logger
 from scapy.all import Packet, raw, PcapReader
-from util import hexdump_bytes, packet2dict
+from util import hexdump_bytes, packet2dict, check_bpf_filter_validity
 import tree
 import os
 logger.setLevel(logging.DEBUG)
@@ -38,11 +38,12 @@ class Ui_Form(object):
         # 创建四个控件
         self.start_button = QtWidgets.QPushButton("开始", bar)
         self.end_button = QtWidgets.QPushButton("结束", bar)
+
         self.filter_exp = QtWidgets.QLineEdit(bar)
-        self.filter_part4 = QtWidgets.QLineEdit(bar)
+        self.filter_exp.setPlaceholderText("实时过滤器")
 
         # 设置合适的大小策略和最大高度
-        for part in [self.start_button, self.end_button, self.filter_exp, self.filter_part4]:
+        for part in [self.start_button, self.end_button, self.filter_exp]:
             part.setMaximumHeight(30)
             part.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
 
@@ -50,18 +51,9 @@ class Ui_Form(object):
         self.filter_layout.addWidget(self.start_button)  # Start button
         self.filter_layout.addWidget(self.end_button)  # End button
         self.filter_layout.addWidget(self.filter_exp)  # Line Edit 2
-        self.filter_layout.addWidget(self.filter_part4)  # Line Edit 3
 
-        # 使用 QSpacerItem 来调整比例
-        spacer1 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
-        spacer2 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
 
-        # 添加间隔项，调整控件宽度比例
-        self.filter_layout.addItem(spacer1)  # 在第一个和第二个控件之间
-        self.filter_layout.addItem(spacer2)  # 在第二个和第三个控件之间
 
-        # 将 container 添加到 splitter_2
-        self.splitter_2.addWidget(bar)
 
         # 将 container 添加到 splitter_2
         self.splitter_2.addWidget(bar)
@@ -127,6 +119,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.item_list = []
         self.reader = None
         self.subp = None
+        
         # table, item_list为表格渲染数据来源
         self.set_dynamic_table(self.item_list)
         # Create the Form UI
@@ -134,6 +127,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self.form_widget)
         self.ui = Ui_Form()
         self.ui.setupUi(self.form_widget, self.dynamic_table)
+
+        self.cur_dev_name = None
+        self.dev_mm = PcapDeviceManager()
+        self.bpf_exp = ""
         # Set up the menu bar
         self.setupMenu()
         # Maximize the form
@@ -145,12 +142,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_timer.timeout.connect(self.sync_data)
         # 过滤表达式
         self.ui.filter_exp.returnPressed.connect(self.enter_exp_event)
-    
+        # 开始捕获
+        self.ui.start_button.clicked.connect(self.start_new_listen)
+        # 结束捕获
+        self.ui.end_button.clicked.connect(self.stop_listen)
+        
     def start_new_listen(self):
+        if self.subp!=None:
+            QMessageBox.information(self,"警告","您必须先停止正在进行的抓包，才能开始新的抓包")
+            return
+        # 清空数据模型
         self.tabe_model.delete_all_data()
+        # 删除缓存
+        self.dynamic_table.arrive_list.clear()
         out_file = "tmp.pcap"
-        dev = select_device()
-        bpf = ""
+        dev = self.cur_dev_name
+        bpf = self.bpf_exp
         if os.path.exists(out_file):
             os.remove(out_file)
         self.subp = subprocess.Popen(
@@ -161,29 +168,32 @@ class MainWindow(QtWidgets.QMainWindow):
             stderr=subprocess.PIPE,
             text=True,
             )
+        
         while not os.path.exists(out_file):
             pass
         self.reader = PcapReader(out_file)
         self.last_item = 1
         # 开启同步
         self.update_timer.start()
+        logger.info(f"start listen {self.subp.pid}")
 
     def stop_listen(self):
+        if self.subp==None:
+            QMessageBox.information(self,"警告","抓包已经结束，或从未开始")
+            return
         # 结束同步
-        logger.info("try stop listen")
         self.update_timer.stop()
         self.subp.stdin.write("2\n")
         self.subp.stdin.flush()
         self.subp.wait()
+        logger.info(f"stop  listen {self.subp.pid}")
         self.subp=None
         self.reader=None
 
-        
+    
     def sync_data(self):
         """定期同步两个进程的数据,并更新表格"""
-        # 询问大小
-        #define SIGUSR 25
-        
+        # 询问缓冲区大小
         self.subp.stdin.write("1\n")
         self.subp.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
         output = self.subp.stdout.readline().strip()
@@ -192,30 +202,55 @@ class MainWindow(QtWidgets.QMainWindow):
         assert(count>=0)
         if count==0:
             return
-        
-        for index in range(self.last_item, value):
+        # 限制数量
+        if count>1000:
+            count=1000
+        for index in range(self.last_item, self.last_item + count):
             self.item_list.append((index, next(self.reader)))
-        self.last_item = value
+        self.last_item += count
         self.dynamic_table.update_table()
         logger.debug(f"sync {count} packets end")
+    
+    def show_input_dialog(self):
+        # 弹出输入对话框
+        text, ok = QInputDialog.getText(self, "BPF过滤", "输入BPF过滤表达式")
+        if ok and text:
+            if check_bpf_filter_validity(text):
+                QMessageBox.information(self, "BPF过滤", f"设置BPF过滤器为{text}")
+                self.bpf_exp = text
+            else:
+                QMessageBox.information(self, "BPF过滤", "表达式不合法")
     def setupMenu(self):
         # Create a menu bar
         menubar = self.menuBar()
 
-        # File menu
-        file_menu = menubar.addMenu("File")
-        
+        self.file = menubar.addMenu("文件")
+        self.bpf = menubar.addMenu("BPF过滤器")
+        self.dev_menu = menubar.addMenu("网卡")
+
+        input_action = self.bpf.addAction("输入BPF表达式")
+        input_action.triggered.connect(self.show_input_dialog)
+        self.dev_mm.find_all_devices()
+        for index, name, addr in self.dev_mm.list_devices():
+            self.dev_menu.addAction(f"{index+1}.{name}\t{addr}")
+        #默认选择第一个网卡
+        self.cur_dev_name = self.dev_mm.get_device(0)
+        self.dev_menu.triggered.connect(self.select_dev)
+
         # Adding actions to the File menu
         exit_action = QtWidgets.QAction("Exit", self)
         exit_action.triggered.connect(self.close)  # Close the application
-        file_menu.addAction(exit_action)
-
         # Edit menu
         edit_menu = menubar.addMenu("Edit")
+
+    
+    def select_dev(self, Item=None):
+        value = Item.text()
+        index = int(value.split(".")[0])-1
+        cur_dev_name = self.dev_mm.get_device(index)
+        self.cur_dev_name = cur_dev_name
+        QMessageBox.information(self, "设备选择", f"监听网卡{value}")
         
-        # Additional edit actions can be added here
-        # Example: edit_action = QtWidgets.QAction("Edit Item", self)
-        # edit_menu.addAction(edit_action)
     def click_item_event(self, Item=None):
         # 如果单元格对象为空
         if Item is None:
@@ -247,6 +282,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    window.start_new_listen()
     app.exec_()
-    window.stop_listen()
+    if window.subp!=None:
+        window.stop_listen()
+    sys.exit()

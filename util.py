@@ -32,3 +32,12 @@ def packet2dict(packet):
         display[p.name] = p.fields
         p = p.payload
     return display
+
+from scapy.all import *
+def check_bpf_filter_validity(bpf_filter):
+    try:
+        # 使用 scapy 的 sniff 方法来应用 BPF 过滤器
+        sniff(filter=bpf_filter, count=1, timeout=1)  # 捕获 1 个包，超时时间为 1 秒
+        return True
+    except Exception as e:
+        return False

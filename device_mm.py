@@ -7,7 +7,6 @@ class PcapDeviceManager:
     def __init__(self):
         self.devices = None
         self.devices_name = None
-    
     def find_all_devices(self):
         """Find and store all available devices."""
         # Create a buffer to store error messages
