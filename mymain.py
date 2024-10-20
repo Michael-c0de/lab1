@@ -96,6 +96,56 @@ class Ui_Form(object):
         _translate = QtCore.QCoreApplication.translate
         Form.setWindowTitle(_translate("Form", "Form"))
 
+import time
+from PyQt5.QtCore import QThread, pyqtSignal
+
+class SyncThread(QThread):
+    data_synced = pyqtSignal(int)  # 用于通知主线程同步的数量
+
+    def __init__(self, subp, reader, last_item, item_list, dynamic_table):
+        super().__init__()
+        self.subp = subp
+        self.reader = reader
+        self.last_item = last_item
+        self.item_list = item_list
+        self.dynamic_table = dynamic_table
+        self.running = True  # 控制线程运行状态
+
+    def run(self):
+        """线程的主要逻辑，持续同步数据"""
+        while self.running:
+            # 每次同步前可以加一个时间间隔，比如 1 秒
+            self.sync_data()  # 执行同步操作
+            time.sleep(1)  # 设置同步的频率，每 1 秒同步一次
+
+    def sync_data(self):
+        """执行实际的数据同步逻辑"""
+        # 询问缓冲区大小
+        self.subp.stdin.write("1\n")
+        self.subp.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
+        output = self.subp.stdout.readline().strip()
+        value = int(output)
+        count = value - self.last_item
+        assert(count >= 0)
+        if count == 0:
+            return
+        # 限制同步数量
+        if count > 1000:
+            count = 1000
+        # 同步数据
+        for index in range(self.last_item, self.last_item + count):
+            self.item_list.append((index, next(self.reader)))
+        self.last_item += count
+        # 更新表格
+        self.dynamic_table.update_table()
+        # 发出信号通知主线程
+        self.data_synced.emit(count)
+
+    def stop(self):
+        """停止线程的运行"""
+        self.running = False
+
+
 
 
 # 数据逻辑应该被迁移到这里
@@ -172,11 +222,20 @@ class MainWindow(QtWidgets.QMainWindow):
         while not os.path.exists(out_file):
             pass
         self.reader = PcapReader(out_file)
+        
         self.last_item = 1
         # 开启同步
-        self.update_timer.start()
+        # self.update_timer.start()
+        # 启动同步线程
+        self.sync_thread = SyncThread(self.subp, self.reader, self.last_item, self.item_list, self.dynamic_table)
+        self.sync_thread.data_synced.connect(self.on_data_synced)  # 连接信号
+        self.sync_thread.start()  # 启动线程
         logger.info(f"start listen {self.subp.pid}")
-
+    
+    def on_data_synced(self, count):
+        """同步完成后更新界面或其他操作"""
+        logger.info(f"sync {count} packet")
+    
     def stop_listen(self):
         if self.subp==None:
             QMessageBox.information(self,"警告","抓包已经结束，或从未开始")
@@ -186,11 +245,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.subp.stdin.write("2\n")
         self.subp.stdin.flush()
         self.subp.wait()
+        self.reader.close()
         logger.info(f"stop  listen {self.subp.pid}")
         self.subp=None
         self.reader=None
+        self.sync_thread.stop()
+        self.sync_thread.wait()  # 等待线程完全结束
+        
+        logger.info("sync thread end")
 
-    
     def sync_data(self):
         """定期同步两个进程的数据,并更新表格"""
         # 询问缓冲区大小
