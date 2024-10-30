@@ -186,10 +186,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Maximize the form
         self.showMaximized()
         
-        # 同步计时器
-        self.update_timer = QtCore.QTimer(self)
-        self.update_timer.setInterval(1000)  # 每1秒同步一次数据
-        self.update_timer.timeout.connect(self.sync_data)
+
         # 过滤表达式
         self.ui.filter_exp.returnPressed.connect(self.enter_exp_event)
         # 开始捕获
@@ -224,8 +221,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reader = PcapReader(out_file)
         
         self.last_item = 1
-        # 开启同步
-        # self.update_timer.start()
         # 启动同步线程
         self.sync_thread = SyncThread(self.subp, self.reader, self.last_item, self.item_list, self.dynamic_table)
         self.sync_thread.data_synced.connect(self.on_data_synced)  # 连接信号
@@ -235,13 +230,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_data_synced(self, count):
         """同步完成后更新界面或其他操作"""
         logger.info(f"sync {count} packet")
+        # self.sync_data
     
     def stop_listen(self):
         if self.subp==None:
             QMessageBox.information(self,"警告","抓包已经结束，或从未开始")
             return
         # 结束同步
-        self.update_timer.stop()
         self.subp.stdin.write("2\n")
         self.subp.stdin.flush()
         self.subp.wait()
@@ -254,25 +249,25 @@ class MainWindow(QtWidgets.QMainWindow):
         
         logger.info("sync thread end")
 
-    def sync_data(self):
-        """定期同步两个进程的数据,并更新表格"""
-        # 询问缓冲区大小
-        self.subp.stdin.write("1\n")
-        self.subp.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
-        output = self.subp.stdout.readline().strip()
-        value = int(output)
-        count = value - self.last_item
-        assert(count>=0)
-        if count==0:
-            return
-        # 限制数量
-        if count>1000:
-            count=1000
-        for index in range(self.last_item, self.last_item + count):
-            self.item_list.append((index, next(self.reader)))
-        self.last_item += count
-        self.dynamic_table.update_table()
-        logger.debug(f"sync {count} packets end")
+    # def sync_data(self):
+    #     """定期同步两个进程的数据,并更新表格"""
+    #     # 询问缓冲区大小
+    #     self.subp.stdin.write("1\n")
+    #     self.subp.stdin.flush()  # 刷新缓冲区，确保数据立即发送到子进程
+    #     output = self.subp.stdout.readline().strip()
+    #     value = int(output)
+    #     count = value - self.last_item
+    #     assert(count>=0)
+    #     if count==0:
+    #         return
+    #     # 限制数量
+    #     if count>1000:
+    #         count=1000
+    #     for index in range(self.last_item, self.last_item + count):
+    #         self.item_list.append((index, next(self.reader)))
+    #     self.last_item += count
+    #     self.dynamic_table.update_table()
+    #     logger.debug(f"sync {count} packets end")
     
     def show_input_dialog(self):
         # 弹出输入对话框
