@@ -152,7 +152,7 @@ class SyncThread(QThread):
 class MainWindow(QtWidgets.QMainWindow):
 
     def set_dynamic_table(self, item_list):
-        self.headers = ["count", "ts", "src1", "dst1", "src2", "dst2", "info"]
+        self.headers = ["count", "src1", "dst1", "src2", "dst2", "info"]
         self.tabe_model = MyTableModel([], self.headers)
         self.dynamic_table = DynamicTable(item_list, self.tabe_model)
 

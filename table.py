@@ -49,7 +49,7 @@ class MyTableModel(QAbstractTableModel):
         for  count, packet in new_rows:
             row_data = [
                 count,
-                "1",
+                # "1",
                 packet.src if hasattr(packet, "src") else None,
                 packet.dst if hasattr(packet, "dst") else None,
                 packet.payload.src if hasattr(packet.payload, "src") else None,
