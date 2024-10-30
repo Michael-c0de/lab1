@@ -49,7 +49,6 @@ class MyTableModel(QAbstractTableModel):
         for  count, packet in new_rows:
             row_data = [
                 count,
-                # "1",
                 packet.src if hasattr(packet, "src") else None,
                 packet.dst if hasattr(packet, "dst") else None,
                 packet.payload.src if hasattr(packet.payload, "src") else None,
@@ -81,11 +80,7 @@ class DynamicTable(QWidget):
         layout.addWidget(self.table_view)
         self.setLayout(layout)
         
-        # 定时器，每0.5秒从队列获取数据
-        # self.update_timer = QTimer(self)
-        # self.update_timer.setInterval(1000)  # 每1秒更新一次表格
-        # self.update_timer.timeout.connect(self.update_table)
-        # self.update_timer.start()
+
         self.filter_exp = None
         self.batch_size = 500
     def filter(self, packet:Packet):
@@ -94,11 +89,6 @@ class DynamicTable(QWidget):
         frame = packet2dict(packet)
         return parse_exp(frame, self.filter_exp)
     
-
-    # def get_packet(self, offset):
-    #     if offset not in self.cache:
-    #         self.cache[offset] = Ether(self.arrive_list[offset][2])
-    #     return self.cache[offset]
 
     def filter_wrap(self, item):
         return self.filter(item[1])

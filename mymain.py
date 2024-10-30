@@ -137,7 +137,7 @@ class SyncThread(QThread):
             self.item_list.append((index, next(self.reader)))
         self.last_item += count
         # 更新表格
-        self.dynamic_table.update_table()
+        # self.dynamic_table.update_table()
         # 发出信号通知主线程
         self.data_synced.emit(count)
 
@@ -202,6 +202,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabe_model.delete_all_data()
         # 删除缓存
         self.dynamic_table.arrive_list.clear()
+        self.dynamic_table.filter_exp = None
+
         out_file = "tmp.pcap"
         dev = self.cur_dev_name
         bpf = self.bpf_exp
@@ -230,7 +232,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_data_synced(self, count):
         """同步完成后更新界面或其他操作"""
         logger.info(f"sync {count} packet")
-        # self.sync_data
+        self.dynamic_table.update_table()
     
     def stop_listen(self):
         if self.subp==None:
